@@ -6,6 +6,11 @@ public class RpnPrinter implements Expr.Visitor<String> {
   }
 
   @Override
+  public String visitAssignExpr(Expr.Assign expr) {
+    return expr.value.accept(this) + " " + expr.name.lexeme + " =";
+  }
+
+  @Override
   public String visitBinaryExpr(Expr.Binary expr) {
     return expr.left.accept(this) + " "
         + expr.right.accept(this) + " "
@@ -29,6 +34,11 @@ public class RpnPrinter implements Expr.Visitor<String> {
     if (expr.value == null)
       return "nil";
     return expr.value.toString();
+  }
+
+  @Override
+  public String visitVariableExpr(Expr.Variable expr) {
+    return expr.name.lexeme;
   }
 
   @Override

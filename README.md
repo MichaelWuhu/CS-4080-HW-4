@@ -1,7 +1,4 @@
-# Crafting Interpreters — Chapters 6 and 7
-
-This repository contains the Java code and challenge solutions for Chapters 6
-and 7 of *Crafting Interpreters*.
+# Crafting Interpreters 
 
 ## Compile
 

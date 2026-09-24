@@ -1,159 +1,203 @@
-package com.craftinginterpreters.lox;
+ package com.craftinginterpreters.lox;
 
-class Interpreter implements Expr.Visitor<Object> {
-  void interpret(Expr expression) {
-    try {
-      Object value = evaluate(expression);
-      System.out.println(stringify(value));
-    } catch (RuntimeError error) {
-      Lox.runtimeError(error);
-    }
-  }
+ import java.util.List;
 
-  @Override
-  public Object visitLiteralExpr(Expr.Literal expr) {
-    return expr.value;
-  }
+ class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> {
+   final Environment globals = new Environment();
+   private Environment environment = globals;
+   private boolean replMode = false;
 
-  @Override
-  public Object visitGroupingExpr(Expr.Grouping expr) {
-    return evaluate(expr.expression);
-  }
+   void interpret(List<Stmt> statements, boolean replMode) {
+     this.replMode = replMode;
+     try {
+       for (Stmt statement : statements) {
+         if (statement != null) execute(statement);
+       }
+     } catch (RuntimeError error) {
+       Lox.runtimeError(error);
+     } finally {
+       this.replMode = false;
+     }
+   }
 
-  @Override
-  public Object visitUnaryExpr(Expr.Unary expr) {
-    Object right = evaluate(expr.right);
+   private void execute(Stmt stmt) {
+     stmt.accept(this);
+   }
 
-    switch (expr.operator.type) {
-      case BANG:
-        return !isTruthy(right);
-      case MINUS:
-        checkNumberOperand(expr.operator, right);
-        return -(double) right;
-      default:
-        return null;
-    }
-  }
+   void executeBlock(List<Stmt> statements, Environment blockEnvironment) {
+     Environment previous = this.environment;
+     try {
+       this.environment = blockEnvironment;
+       for (Stmt statement : statements) {
+         if (statement != null) execute(statement);
+       }
+     } finally {
+       this.environment = previous;
+     }
+   }
 
-  @Override
-  public Object visitBinaryExpr(Expr.Binary expr) {
-    // Evaluate left first so comma expressions preserve C's evaluation order.
-    Object left = evaluate(expr.left);
-    Object right = evaluate(expr.right);
+   @Override
+   public Void visitBlockStmt(Stmt.Block stmt) {
+     executeBlock(stmt.statements, new Environment(environment));
+     return null;
+   }
 
-    switch (expr.operator.type) {
-      case COMMA:
-        return right;
+   @Override
+   public Void visitExpressionStmt(Stmt.Expression stmt) {
+     Object value = evaluate(stmt.expression);
+     if (replMode) System.out.println(stringify(value));
+     return null;
+   }
 
-      case GREATER:
-        return compare(expr.operator, left, right) > 0;
-      case GREATER_EQUAL:
-        return compare(expr.operator, left, right) >= 0;
-      case LESS:
-        return compare(expr.operator, left, right) < 0;
-      case LESS_EQUAL:
-        return compare(expr.operator, left, right) <= 0;
+   @Override
+   public Void visitPrintStmt(Stmt.Print stmt) {
+     System.out.println(stringify(evaluate(stmt.expression)));
+     return null;
+   }
 
-      case MINUS:
-        checkNumberOperands(expr.operator, left, right);
-        return (double) left - (double) right;
-      case PLUS:
-        if (left instanceof Double && right instanceof Double) {
-          return (double) left + (double) right;
-        }
+   @Override
+   public Void visitVarStmt(Stmt.Var stmt) {
+     if (stmt.initializer == null) {
+       environment.defineUninitialized(stmt.name.lexeme);
+     } else {
+       environment.define(stmt.name.lexeme, evaluate(stmt.initializer));
+     }
+     return null;
+   }
 
-        // Challenge 7.2: if either value is a string, stringify both values.
-        if (left instanceof String || right instanceof String) {
-          return stringify(left) + stringify(right);
-        }
+   @Override
+   public Object visitAssignExpr(Expr.Assign expr) {
+     Object value = evaluate(expr.value);
+     environment.assign(expr.name, value);
+     return value;
+   }
 
-        throw new RuntimeError(expr.operator,
-            "Operands must be two numbers or include a string.");
-      case SLASH:
-        checkNumberOperands(expr.operator, left, right);
-        if ((double) right == 0.0) {
-          throw new RuntimeError(expr.operator, "Cannot divide by zero.");
-        }
-        return (double) left / (double) right;
-      case STAR:
-        checkNumberOperands(expr.operator, left, right);
-        return (double) left * (double) right;
+   @Override
+   public Object visitVariableExpr(Expr.Variable expr) {
+     return environment.get(expr.name);
+   }
 
-      case BANG_EQUAL:
-        return !isEqual(left, right);
-      case EQUAL_EQUAL:
-        return isEqual(left, right);
-      default:
-        return null;
-    }
-  }
+   @Override
+   public Object visitLiteralExpr(Expr.Literal expr) {
+     return expr.value;
+   }
 
-  @Override
-  public Object visitConditionalExpr(Expr.Conditional expr) {
-    if (isTruthy(evaluate(expr.condition))) {
-      return evaluate(expr.thenBranch);
-    }
-    return evaluate(expr.elseBranch);
-  }
+   @Override
+   public Object visitGroupingExpr(Expr.Grouping expr) {
+     return evaluate(expr.expression);
+   }
 
-  private Object evaluate(Expr expr) {
-    return expr.accept(this);
-  }
+   @Override
+   public Object visitUnaryExpr(Expr.Unary expr) {
+     Object right = evaluate(expr.right);
+     switch (expr.operator.type) {
+       case BANG:
+         return !isTruthy(right);
+       case MINUS:
+         checkNumberOperand(expr.operator, right);
+         return -(double) right;
+       default:
+         return null;
+     }
+   }
 
-  private boolean isTruthy(Object object) {
-    if (object == null)
-      return false;
-    if (object instanceof Boolean)
-      return (boolean) object;
-    return true;
-  }
+   @Override
+   public Object visitBinaryExpr(Expr.Binary expr) {
+     Object left = evaluate(expr.left);
+     Object right = evaluate(expr.right);
 
-  private boolean isEqual(Object a, Object b) {
-    if (a == null && b == null)
-      return true;
-    if (a == null)
-      return false;
-    return a.equals(b);
-  }
+     switch (expr.operator.type) {
+       case COMMA:
+         return right;
+       case GREATER:
+         return compare(expr.operator, left, right) > 0;
+       case GREATER_EQUAL:
+         return compare(expr.operator, left, right) >= 0;
+       case LESS:
+         return compare(expr.operator, left, right) < 0;
+       case LESS_EQUAL:
+         return compare(expr.operator, left, right) <= 0;
+       case MINUS:
+         checkNumberOperands(expr.operator, left, right);
+         return (double) left - (double) right;
+       case PLUS:
+         if (left instanceof Double && right instanceof Double) {
+           return (double) left + (double) right;
+         }
+         if (left instanceof String || right instanceof String) {
+           return stringify(left) + stringify(right);
+         }
+         throw new RuntimeError(expr.operator,
+             "Operands must be two numbers or include a string.");
+       case SLASH:
+         checkNumberOperands(expr.operator, left, right);
+         if ((double) right == 0.0) {
+           throw new RuntimeError(expr.operator, "Cannot divide by zero.");
+         }
+         return (double) left / (double) right;
+       case STAR:
+         checkNumberOperands(expr.operator, left, right);
+         return (double) left * (double) right;
+       case BANG_EQUAL:
+         return !isEqual(left, right);
+       case EQUAL_EQUAL:
+         return isEqual(left, right);
+       default:
+         return null;
+     }
+   }
 
-  private int compare(Token operator, Object left, Object right) {
-    if (left instanceof Double && right instanceof Double) {
-      return Double.compare((double) left, (double) right);
-    }
+   @Override
+   public Object visitConditionalExpr(Expr.Conditional expr) {
+     if (isTruthy(evaluate(expr.condition))) return evaluate(expr.thenBranch);
+     return evaluate(expr.elseBranch);
+   }
 
-    // Challenge 7.1: compare two strings lexicographically.
-    if (left instanceof String && right instanceof String) {
-      return ((String) left).compareTo((String) right);
-    }
+   private Object evaluate(Expr expr) {
+     return expr.accept(this);
+   }
 
-    throw new RuntimeError(operator,
-        "Operands must be two numbers or two strings.");
-  }
+   private boolean isTruthy(Object object) {
+     if (object == null) return false;
+     if (object instanceof Boolean) return (boolean) object;
+     return true;
+   }
 
-  private void checkNumberOperand(Token operator, Object operand) {
-    if (operand instanceof Double)
-      return;
-    throw new RuntimeError(operator, "Operand must be a number.");
-  }
+   private boolean isEqual(Object a, Object b) {
+     if (a == null && b == null) return true;
+     if (a == null) return false;
+     return a.equals(b);
+   }
 
-  private void checkNumberOperands(Token operator, Object left, Object right) {
-    if (left instanceof Double && right instanceof Double)
-      return;
-    throw new RuntimeError(operator, "Operands must be numbers.");
-  }
+   private int compare(Token operator, Object left, Object right) {
+     if (left instanceof Double && right instanceof Double) {
+       return Double.compare((double) left, (double) right);
+     }
+     if (left instanceof String && right instanceof String) {
+       return ((String) left).compareTo((String) right);
+     }
+     throw new RuntimeError(operator,
+         "Operands must be two numbers or two strings.");
+   }
 
-  private String stringify(Object object) {
-    if (object == null)
-      return "nil";
+   private void checkNumberOperand(Token operator, Object operand) {
+     if (operand instanceof Double) return;
+     throw new RuntimeError(operator, "Operand must be a number.");
+   }
 
-    if (object instanceof Double) {
-      String text = object.toString();
-      if (text.endsWith(".0")) {
-        text = text.substring(0, text.length() - 2);
-      }
-      return text;
-    }
+   private void checkNumberOperands(Token operator, Object left, Object right) {
+     if (left instanceof Double && right instanceof Double) return;
+     throw new RuntimeError(operator, "Operands must be numbers.");
+   }
 
-    return object.toString();
-  }
-}
+   private String stringify(Object object) {
+     if (object == null) return "nil";
+     if (object instanceof Double) {
+       String text = object.toString();
+       if (text.endsWith(".0")) text = text.substring(0, text.length() - 2);
+       return text;
+     }
+     return object.toString();
+   }
+ }
+
