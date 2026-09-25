@@ -3,6 +3,10 @@
  import java.util.List;
 
  class Interpreter implements Expr.Visitor<Object>, Stmt.Visitor<Void> {
+   private static class BreakException extends RuntimeException {
+     private static final long serialVersionUID = 1L;
+   }
+
    final Environment globals = new Environment();
    private Environment environment = globals;
    private boolean replMode = false;
@@ -25,14 +29,14 @@
    }
 
    void executeBlock(List<Stmt> statements, Environment blockEnvironment) {
-     Environment previous = this.environment;
+     Environment previous = environment;
      try {
-       this.environment = blockEnvironment;
+       environment = blockEnvironment;
        for (Stmt statement : statements) {
          if (statement != null) execute(statement);
        }
      } finally {
-       this.environment = previous;
+       environment = previous;
      }
    }
 
@@ -43,9 +47,24 @@
    }
 
    @Override
+   public Void visitBreakStmt(Stmt.Break stmt) {
+     throw new BreakException();
+   }
+
+   @Override
    public Void visitExpressionStmt(Stmt.Expression stmt) {
      Object value = evaluate(stmt.expression);
      if (replMode) System.out.println(stringify(value));
+     return null;
+   }
+
+   @Override
+   public Void visitIfStmt(Stmt.If stmt) {
+     if (isTruthy(evaluate(stmt.condition))) {
+       execute(stmt.thenBranch);
+     } else if (stmt.elseBranch != null) {
+       execute(stmt.elseBranch);
+     }
      return null;
    }
 
@@ -61,6 +80,18 @@
        environment.defineUninitialized(stmt.name.lexeme);
      } else {
        environment.define(stmt.name.lexeme, evaluate(stmt.initializer));
+     }
+     return null;
+   }
+
+   @Override
+   public Void visitWhileStmt(Stmt.While stmt) {
+     try {
+       while (isTruthy(evaluate(stmt.condition))) {
+         execute(stmt.body);
+       }
+     } catch (BreakException breakException) {
+       // Exit only the nearest loop.
      }
      return null;
    }
@@ -104,23 +135,28 @@
    @Override
    public Object visitBinaryExpr(Expr.Binary expr) {
      Object left = evaluate(expr.left);
-     Object right = evaluate(expr.right);
 
      switch (expr.operator.type) {
+       case AND:
+         if (!isTruthy(left)) return left;
+         return evaluate(expr.right);
+       case OR:
+         if (isTruthy(left)) return left;
+         return evaluate(expr.right);
        case COMMA:
-         return right;
+         return evaluate(expr.right);
        case GREATER:
-         return compare(expr.operator, left, right) > 0;
+         return compare(expr.operator, left, evaluate(expr.right)) > 0;
        case GREATER_EQUAL:
-         return compare(expr.operator, left, right) >= 0;
+         return compare(expr.operator, left, evaluate(expr.right)) >= 0;
        case LESS:
-         return compare(expr.operator, left, right) < 0;
+         return compare(expr.operator, left, evaluate(expr.right)) < 0;
        case LESS_EQUAL:
-         return compare(expr.operator, left, right) <= 0;
+         return compare(expr.operator, left, evaluate(expr.right)) <= 0;
        case MINUS:
-         checkNumberOperands(expr.operator, left, right);
-         return (double) left - (double) right;
-       case PLUS:
+         return numericBinary(expr, left, evaluate(expr.right), '-');
+       case PLUS: {
+         Object right = evaluate(expr.right);
          if (left instanceof Double && right instanceof Double) {
            return (double) left + (double) right;
          }
@@ -129,22 +165,30 @@
          }
          throw new RuntimeError(expr.operator,
              "Operands must be two numbers or include a string.");
-       case SLASH:
+       }
+       case SLASH: {
+         Object right = evaluate(expr.right);
          checkNumberOperands(expr.operator, left, right);
          if ((double) right == 0.0) {
            throw new RuntimeError(expr.operator, "Cannot divide by zero.");
          }
          return (double) left / (double) right;
+       }
        case STAR:
-         checkNumberOperands(expr.operator, left, right);
-         return (double) left * (double) right;
+         return numericBinary(expr, left, evaluate(expr.right), '*');
        case BANG_EQUAL:
-         return !isEqual(left, right);
+         return !isEqual(left, evaluate(expr.right));
        case EQUAL_EQUAL:
-         return isEqual(left, right);
+         return isEqual(left, evaluate(expr.right));
        default:
          return null;
      }
+   }
+
+   private Object numericBinary(Expr.Binary expr, Object left, Object right, char operator) {
+     checkNumberOperands(expr.operator, left, right);
+     if (operator == '-') return (double) left - (double) right;
+     return (double) left * (double) right;
    }
 
    @Override

@@ -8,8 +8,9 @@
  class Parser {
    private static class ParseError extends RuntimeException {}
 
-   private final List<Token> tokens;
-   private int current = 0;
+  private final List<Token> tokens;
+  private int current = 0;
+  private int loopDepth = 0;
 
    Parser(List<Token> tokens) {
      this.tokens = tokens;
@@ -39,11 +40,97 @@
      return new Stmt.Var(name, initializer);
    }
 
-   private Stmt statement() {
-     if (match(PRINT)) return printStatement();
+  private Stmt statement() {
+    if (match(IF)) return ifStatement();
+    if (match(WHILE)) return whileStatement();
+    if (match(FOR)) return forStatement();
+    if (match(BREAK)) return breakStatement();
+    if (match(PRINT)) return printStatement();
      if (match(LEFT_BRACE)) return new Stmt.Block(block());
      return expressionStatement();
-   }
+  }
+
+  private Stmt ifStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'if'.");
+    Expr condition = expression();
+    consume(RIGHT_PAREN, "Expect ')' after if condition.");
+
+    Stmt thenBranch = statement();
+    Stmt elseBranch = null;
+    if (match(ELSE)) elseBranch = statement();
+    return new Stmt.If(condition, thenBranch, elseBranch);
+  }
+
+  private Stmt whileStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'while'.");
+    Expr condition = expression();
+    consume(RIGHT_PAREN, "Expect ')' after condition.");
+
+    loopDepth++;
+    Stmt body;
+    try {
+      body = statement();
+    } finally {
+      loopDepth--;
+    }
+    return new Stmt.While(condition, body);
+  }
+
+  private Stmt forStatement() {
+    consume(LEFT_PAREN, "Expect '(' after 'for'.");
+
+    Stmt initializer;
+    if (match(SEMICOLON)) {
+      initializer = null;
+    } else if (match(VAR)) {
+      initializer = varDeclaration();
+    } else {
+      initializer = expressionStatement();
+    }
+
+    Expr condition = null;
+    if (!check(SEMICOLON)) condition = expression();
+    consume(SEMICOLON, "Expect ';' after loop condition.");
+
+    Expr increment = null;
+    if (!check(RIGHT_PAREN)) increment = expression();
+    consume(RIGHT_PAREN, "Expect ')' after for clauses.");
+
+    loopDepth++;
+    Stmt body;
+    try {
+      body = statement();
+    } finally {
+      loopDepth--;
+    }
+
+    if (increment != null) {
+      List<Stmt> statements = new ArrayList<>();
+      statements.add(body);
+      statements.add(new Stmt.Expression(increment));
+      body = new Stmt.Block(statements);
+    }
+
+    if (condition == null) condition = new Expr.Literal(true);
+    body = new Stmt.While(condition, body);
+
+    if (initializer != null) {
+      List<Stmt> statements = new ArrayList<>();
+      statements.add(initializer);
+      statements.add(body);
+      body = new Stmt.Block(statements);
+    }
+    return body;
+  }
+
+  private Stmt breakStatement() {
+    Token keyword = previous();
+    if (loopDepth == 0) {
+      throw error(keyword, "Cannot use 'break' outside of a loop.");
+    }
+    consume(SEMICOLON, "Expect ';' after 'break'.");
+    return new Stmt.Break(keyword);
+  }
 
    private Stmt printStatement() {
      Expr value = expression();
@@ -89,16 +176,36 @@
      return expr;
    }
 
-   private Expr conditional() {
-     Expr expr = equality();
+  private Expr conditional() {
+    Expr expr = or();
      if (match(QUESTION)) {
        Expr thenBranch = expression();
        consume(COLON, "Expect ':' after conditional expression.");
        Expr elseBranch = conditional();
        expr = new Expr.Conditional(expr, thenBranch, elseBranch);
      }
-     return expr;
-   }
+    return expr;
+  }
+
+  private Expr or() {
+    Expr expr = and();
+    while (match(OR)) {
+      Token operator = previous();
+      Expr right = and();
+      expr = new Expr.Binary(expr, operator, right);
+    }
+    return expr;
+  }
+
+  private Expr and() {
+    Expr expr = equality();
+    while (match(AND)) {
+      Token operator = previous();
+      Expr right = equality();
+      expr = new Expr.Binary(expr, operator, right);
+    }
+    return expr;
+  }
 
    private Expr equality() {
      Expr expr = comparison();
@@ -169,7 +276,8 @@
      while (!isAtEnd()) {
        if (previous().type == SEMICOLON) return;
        switch (peek().type) {
-         case CLASS:
+        case CLASS:
+        case BREAK:
          case FUN:
          case VAR:
          case FOR:
@@ -218,4 +326,3 @@
      return new ParseError();
    }
  }
-

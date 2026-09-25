@@ -27,7 +27,10 @@ public class GenerateAst {
         "Expression : Expr expression",
         "Print      : Expr expression",
         "Var        : Token name, Expr initializer",
-        "Block      : List<Stmt> statements"));
+        "Block      : List<Stmt> statements",
+        "If         : Expr condition, Stmt thenBranch, Stmt elseBranch",
+        "While      : Expr condition, Stmt body",
+        "Break      : Token keyword"));
   }
 
   private static void defineAst(
